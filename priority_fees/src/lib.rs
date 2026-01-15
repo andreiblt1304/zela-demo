@@ -26,6 +26,8 @@ pub struct Output {
 	total_transactions: usize,
 	/// Number of transaction skipped because they are voting.
 	vote_transactions: usize,
+	/// Latest processed block.
+	latest_block: u64,
 	// Average priority fees paid per non-voting transactions
 	average_priority_fee_lamports: u64
 }
@@ -78,6 +80,7 @@ impl PriorityFees {
 		let mut total_fees: u64 = 0;
 		let mut nonvote_count: usize = 0;
 		let mut total_count: usize = 0;
+		let mut latest_block: u64 = 0;
 
 		for slot in Self::select_blocks(p, rpc).await? {
 			log::debug!("Processing block {slot}");
@@ -99,6 +102,7 @@ impl PriorityFees {
 				}
 			};
 			total_count += transactions.len();
+			latest_block = slot;
 
 			for (i, transaction) in transactions.into_iter().enumerate() {
 				log::trace!("transaction: {transaction:#?}");
@@ -138,6 +142,7 @@ impl PriorityFees {
 		Ok(Output {
 			total_transactions: total_count,
 			vote_transactions: total_count - nonvote_count,
+			latest_block,
 			average_priority_fee_lamports: total_fees / (nonvote_count as u64),
 		})
 	}
