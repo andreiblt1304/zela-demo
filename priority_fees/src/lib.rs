@@ -67,7 +67,7 @@ impl PriorityFees {
 			).await.map_err(|e| e.to_string())?;
 			log::trace!("get_blocks({start_slot}..) = {}", block_slots.len());
 		}
-		log::info!("Got {} lestest blocks: {:?}", block_slots.len(), block_slots);
+		log::info!("Got {} latest blocks: {:?}", block_slots.len(), block_slots);
 
 		let to_skip = block_slots.len() - block_count;
 
