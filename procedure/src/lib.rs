@@ -213,7 +213,7 @@ fn decode_leader_pubkey(leader_pubkey: &str) -> Option<[u8; 32]> {
 }
 
 fn lookup_geo_bucket(geo_map: &[u8], leader_pubkey: &[u8; 32]) -> Option<u8> {
-    if geo_map.len().is_multiple_of(LEADER_GEO_RECORD_SIZE) {
+    if !geo_map.len().is_multiple_of(LEADER_GEO_RECORD_SIZE) {
         return None;
     }
 
