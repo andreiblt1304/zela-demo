@@ -1,0 +1,3 @@
+[workspace]
+members = ["procedure", "geo-mapper"]
+resolver = "2"
