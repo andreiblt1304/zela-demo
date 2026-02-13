@@ -1,1 +1,3 @@
 /target
+*.csv
+GeoLite2-City_*/
