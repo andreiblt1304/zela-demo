@@ -779,6 +779,10 @@ dependencies = [
 [[package]]
 name = "geo-mapper"
 version = "0.1.0"
+dependencies = [
+ "bs58",
+ "maxminddb",
+]
 
 [[package]]
 name = "getrandom"
@@ -918,6 +922,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipnetwork"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1041,6 +1051,19 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "maxminddb"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99681a80368084e68fff1a4ec657b09ae6a04f1107762ec6346a82b8cc19d8eb"
+dependencies = [
+ "ipnetwork",
+ "log",
+ "memchr",
+ "serde",
+ "thiserror",
+]
 
 [[package]]
 name = "memchr"
@@ -1289,6 +1312,7 @@ dependencies = [
 name = "procedure"
 version = "0.1.0"
 dependencies = [
+ "bs58",
  "log",
  "serde",
  "serde_json",
