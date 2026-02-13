@@ -1,10 +1,7 @@
 use log::info;
 use serde::Serialize;
 use std::net::{IpAddr, SocketAddr};
-use zela_std::rpc_client::{
-    RpcClient,
-    response::{RpcContactInfo, RpcLeaderSchedule},
-};
+use zela_std::rpc_client::{RpcClient, response::RpcContactInfo};
 use zela_std::{CustomProcedure, JsonValue, RpcError};
 
 const ERROR_CODE_INTERNAL: i32 = 500;
@@ -52,46 +49,24 @@ impl CustomProcedure for LeaderRoutingProcedure {
             internal_error("get_slot", format!("failed to fetch current slot: {err}"))
         })?;
 
-        let epoch_schedule = rpc.get_epoch_schedule().await.map_err(|err| {
-            internal_error(
-                "get_epoch_schedule",
-                format!("failed to fetch epoch schedule: {err}"),
-            )
-        })?;
-
-        let leader_schedule = rpc.get_leader_schedule(Some(slot)).await.map_err(|err| {
-            internal_error(
-                "get_leader_schedule",
-                format!("failed to fetch leader schedule for slot {slot}: {err}"),
-            )
-        })?;
-
-        let leader_schedule = leader_schedule.ok_or_else(|| {
-            internal_error(
-                "get_leader_schedule",
-                format!("leader schedule was missing for slot {slot}"),
-            )
-        })?;
-
-        let epoch = epoch_schedule.get_epoch(slot);
-        let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
-        let slot_index = usize::try_from(slot.saturating_sub(first_slot_in_epoch)).map_err(|err| {
-			internal_error(
-				"slot_index",
-				format!(
-					"failed to compute slot index in epoch for slot {slot} and first slot {first_slot_in_epoch}: {err}"
-				),
-			)
-		})?;
-
-        let leader = find_leader_for_slot_index(&leader_schedule, slot_index).ok_or_else(|| {
-            internal_error(
-                "resolve_leader",
-                format!(
-                    "no leader found in leader schedule for slot {slot} (slot_index={slot_index})"
-                ),
-            )
-        })?;
+        let leader = rpc
+            .get_slot_leaders(slot, 1)
+            .await
+            .map_err(|err| {
+                internal_error(
+                    "get_slot_leaders",
+                    format!("failed to fetch current slot leader for slot {slot}: {err}"),
+                )
+            })?
+            .into_iter()
+            .next()
+            .map(|pubkey| pubkey.to_string())
+            .ok_or_else(|| {
+                internal_error(
+                    "resolve_leader",
+                    format!("no leader returned for slot {slot}"),
+                )
+            })?;
 
         let leader_geo = lookup_leader_geo(&leader)
             .unwrap_or(UNKNOWN_GEO)
@@ -172,24 +147,6 @@ fn preferred_contact_addr(contact: &RpcContactInfo) -> Option<SocketAddr> {
         .or(contact.tpu)
         .or(contact.gossip)
         .or(contact.rpc)
-}
-
-fn find_leader_for_slot_index(
-    leader_schedule: &RpcLeaderSchedule,
-    slot_index: usize,
-) -> Option<String> {
-    let mut matching_leaders: Vec<&str> = leader_schedule
-        .iter()
-        .filter_map(|(leader, slots)| slots.contains(&slot_index).then_some(leader.as_str()))
-        .collect();
-
-    if matching_leaders.is_empty() {
-        return None;
-    }
-
-    // HashMap iteration order is non-deterministic, so always select a stable winner.
-    matching_leaders.sort_unstable();
-    matching_leaders.first().map(|leader| (*leader).to_string())
 }
 
 fn lookup_leader_geo(leader_pubkey: &str) -> Option<&'static str> {
@@ -284,7 +241,6 @@ zela_std::zela_custom_procedure!(LeaderRoutingProcedure);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     #[test]
@@ -302,16 +258,6 @@ mod tests {
         let first = fallback_region(leader);
         let second = fallback_region(leader);
         assert_eq!(first, second);
-    }
-
-    #[test]
-    fn find_leader_for_slot_is_stable() {
-        let mut schedule: HashMap<String, Vec<usize>> = HashMap::new();
-        schedule.insert("validator-z".to_string(), vec![8]);
-        schedule.insert("validator-a".to_string(), vec![8]);
-
-        let leader = find_leader_for_slot_index(&schedule, 8).unwrap();
-        assert_eq!(leader, "validator-a");
     }
 
     #[test]
