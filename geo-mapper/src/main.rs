@@ -1,5 +1,6 @@
 mod cli;
 mod db;
+mod metadata;
 
 use std::{
     collections::BTreeMap,
@@ -9,7 +10,8 @@ use std::{
 };
 
 use crate::cli::Cli;
-use crate::db::{GeoBucket, RECORD_SIZE, compute_geolocation, get_db_reader, write_binary_map};
+use crate::db::{GeoBucket, compute_geolocation, get_db_reader, write_binary_map};
+use crate::metadata::write_map_metadata;
 use serde_json::{Value, json};
 
 #[derive(Debug)]
@@ -56,30 +58,24 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     write_binary_map(&cli.output, &map)?;
-
-    let total_leaders = map.len();
-    let unknown_leaders = map
-        .values()
-        .filter(|bucket| **bucket == GeoBucket::Unknown)
-        .count();
-    let mapped_leaders = total_leaders.saturating_sub(unknown_leaders);
-    let unknown_rate = if total_leaders == 0 {
-        0.0
-    } else {
-        (unknown_leaders as f64 / total_leaders as f64) * 100.0
-    };
-    let output_bytes = total_leaders * RECORD_SIZE;
+    let metadata = write_map_metadata(&cli.rpc_url, &cli.db_path, &cli.output, &map)?;
+    let stats = metadata.stats;
 
     println!(
         "wrote {} records ({} bytes) to {}",
-        total_leaders,
-        output_bytes,
+        stats.total_leaders,
+        stats.output_bytes,
         cli.output.display()
     );
     println!(
         "stats: total_leaders={} mapped_leaders={} unknown_leaders={} unknown_rate={:.2}% output_bytes={}",
-        total_leaders, mapped_leaders, unknown_leaders, unknown_rate, output_bytes
+        stats.total_leaders,
+        stats.mapped_leaders,
+        stats.unknown_leaders,
+        stats.unknown_rate_pct,
+        stats.output_bytes
     );
+    println!("metadata: {}", metadata.path.display());
 
     Ok(())
 }
