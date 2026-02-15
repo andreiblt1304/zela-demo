@@ -1,10 +1,6 @@
 use log::info;
 use serde::Serialize;
-use std::net::{IpAddr, SocketAddr};
-use zela_std::rpc_client::{
-    RpcClient,
-    response::{RpcContactInfo, RpcLeaderSchedule},
-};
+use zela_std::rpc_client::{RpcClient, response::RpcLeaderSchedule};
 use zela_std::{CustomProcedure, JsonValue, RpcError};
 
 const ERROR_CODE_INTERNAL: i32 = 500;
@@ -94,10 +90,8 @@ impl CustomProcedure for LeaderRoutingProcedure {
             )
         })?;
 
-        let leader_geo = lookup_leader_geo(&leader)
-            .unwrap_or(UNKNOWN_GEO)
-            .to_string();
-        let closest_region = choose_region(&leader_geo, &leader);
+        let (leader_geo, closest_region) =
+            derive_leader_geo_and_region(&leader, LEADER_GEO_MAP_BIN);
 
         info!(
             "slot={slot} leader={leader} leader_geo={} closest_region={closest_region:?}",
@@ -121,60 +115,6 @@ fn internal_error(stage: &'static str, details: String) -> RpcError<ProcedureErr
     }
 }
 
-pub async fn current_leader_ip() -> Result<Option<IpAddr>, RpcError<ProcedureErrorData>> {
-    let rpc = RpcClient::new();
-    current_leader_ip_with_client(&rpc).await
-}
-
-async fn current_leader_ip_with_client(
-    rpc: &RpcClient,
-) -> Result<Option<IpAddr>, RpcError<ProcedureErrorData>> {
-    let slot = rpc.get_slot().await.map_err(|err| {
-        internal_error(
-            "get_slot_for_leader_ip",
-            format!("failed to fetch current slot for leader ip lookup: {err}"),
-        )
-    })?;
-
-    let leader_pubkey = rpc
-        .get_slot_leaders(slot, 1)
-        .await
-        .map_err(|err| {
-            internal_error(
-                "get_slot_leaders",
-                format!("failed to fetch slot leader for slot {slot}: {err}"),
-            )
-        })?
-        .into_iter()
-        .next()
-        .map(|pubkey| pubkey.to_string());
-
-    let Some(leader_pubkey) = leader_pubkey else {
-        return Ok(None);
-    };
-
-    let cluster_nodes = rpc.get_cluster_nodes().await.map_err(|err| {
-        internal_error(
-            "get_cluster_nodes",
-            format!("failed to fetch cluster nodes for leader ip lookup: {err}"),
-        )
-    })?;
-
-    Ok(cluster_nodes
-        .iter()
-        .find(|node| node.pubkey == leader_pubkey)
-        .and_then(preferred_contact_addr)
-        .map(|addr| addr.ip()))
-}
-
-fn preferred_contact_addr(contact: &RpcContactInfo) -> Option<SocketAddr> {
-    contact
-        .tpu_quic
-        .or(contact.tpu)
-        .or(contact.gossip)
-        .or(contact.rpc)
-}
-
 fn find_leader_for_slot_index(
     leader_schedule: &RpcLeaderSchedule,
     slot_index: usize,
@@ -187,8 +127,12 @@ fn find_leader_for_slot_index(
         .map(ToString::to_string)
 }
 
-fn lookup_leader_geo(leader_pubkey: &str) -> Option<&'static str> {
-    lookup_leader_geo_in_map(LEADER_GEO_MAP_BIN, leader_pubkey)
+fn derive_leader_geo_and_region(leader_pubkey: &str, geo_map: &[u8]) -> (String, ServerRegion) {
+    let leader_geo = lookup_leader_geo_in_map(geo_map, leader_pubkey)
+        .unwrap_or(UNKNOWN_GEO)
+        .to_string();
+    let closest_region = choose_region(&leader_geo, leader_pubkey);
+    (leader_geo, closest_region)
 }
 
 fn lookup_leader_geo_in_map(geo_map: &[u8], leader_pubkey: &str) -> Option<&'static str> {
@@ -279,8 +223,8 @@ zela_std::zela_custom_procedure!(LeaderRoutingProcedure);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use std::collections::HashMap;
-    use std::net::{Ipv4Addr, SocketAddrV4};
 
     #[test]
     fn region_mapping_works() {
@@ -316,29 +260,6 @@ mod tests {
         let from_unknown_geo = choose_region(UNKNOWN_GEO, "validator-x");
         let deterministic_again = choose_region(UNKNOWN_GEO, "validator-x");
         assert_eq!(from_unknown_geo, deterministic_again);
-    }
-
-    #[test]
-    fn preferred_contact_addr_prioritizes_transport_addresses() {
-        let tpu_quic = socket(1000);
-        let tpu = socket(2000);
-        let gossip = socket(3000);
-        let rpc = socket(4000);
-
-        let contact = contact_info(Some(tpu_quic), Some(tpu), Some(gossip), Some(rpc));
-        assert_eq!(preferred_contact_addr(&contact), Some(tpu_quic));
-
-        let contact = contact_info(None, Some(tpu), Some(gossip), Some(rpc));
-        assert_eq!(preferred_contact_addr(&contact), Some(tpu));
-
-        let contact = contact_info(None, None, Some(gossip), Some(rpc));
-        assert_eq!(preferred_contact_addr(&contact), Some(gossip));
-
-        let contact = contact_info(None, None, None, Some(rpc));
-        assert_eq!(preferred_contact_addr(&contact), Some(rpc));
-
-        let contact = contact_info(None, None, None, None);
-        assert_eq!(preferred_contact_addr(&contact), None);
     }
 
     #[test]
@@ -380,32 +301,56 @@ mod tests {
         assert_eq!(lookup_geo_bucket(&[1, 2, 3], &[0u8; 32]), None);
     }
 
-    fn socket(port: u16) -> SocketAddr {
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 10), port))
+    #[derive(Debug, Deserialize)]
+    struct RpcEnvelope {
+        #[serde(default)]
+        params: Option<JsonValue>,
     }
 
-    fn contact_info(
-        tpu_quic: Option<SocketAddr>,
-        tpu: Option<SocketAddr>,
-        gossip: Option<SocketAddr>,
-        rpc: Option<SocketAddr>,
-    ) -> RpcContactInfo {
-        RpcContactInfo {
-            pubkey: "leader".to_string(),
-            gossip,
-            tvu: None,
-            tpu,
-            tpu_quic,
-            tpu_forwards: None,
-            tpu_forwards_quic: None,
-            tpu_vote: None,
-            serve_repair: None,
-            rpc,
-            pubsub: None,
-            version: None,
-            feature_set: None,
-            shred_version: None,
-        }
+    #[test]
+    fn no_input_params_shape_omitted_is_supported() {
+        let request = r#"{
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"zela.geolocation#hash"
+        }"#;
+        let envelope: RpcEnvelope = serde_json::from_str(request).unwrap();
+        assert_eq!(envelope.params, None);
+    }
+
+    #[test]
+    fn no_input_params_shape_null_is_supported() {
+        let request = r#"{
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"zela.geolocation#hash",
+            "params":null
+        }"#;
+        let envelope: RpcEnvelope = serde_json::from_str(request).unwrap();
+        assert_eq!(envelope.params, None);
+    }
+
+    #[test]
+    fn no_input_params_shape_empty_object_is_supported() {
+        let request = r#"{
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"zela.geolocation#hash",
+            "params":{}
+        }"#;
+        let envelope: RpcEnvelope = serde_json::from_str(request).unwrap();
+        assert_eq!(envelope.params, Some(serde_json::json!({})));
+    }
+
+    #[test]
+    fn malformed_geo_map_degrades_to_unknown_geo_without_panicking() {
+        let leader = "9QxCLckBiJc783jnMvXZubK4wH86Eqqvashtrwvcsgkv";
+        let malformed_geo_map = [1u8, 2, 3];
+
+        let (leader_geo, closest_region) = derive_leader_geo_and_region(leader, &malformed_geo_map);
+
+        assert_eq!(leader_geo, UNKNOWN_GEO);
+        assert_eq!(closest_region, fallback_region(leader));
     }
 
     fn build_geo_map(entries: &[(&str, u8)]) -> Vec<u8> {
