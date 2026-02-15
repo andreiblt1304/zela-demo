@@ -2,7 +2,7 @@ use log::info;
 use serde::Serialize;
 use std::net::{IpAddr, SocketAddr};
 use zela_std::rpc_client::{RpcClient, response::RpcContactInfo};
-use zela_std::{CustomProcedure, RpcError};
+use zela_std::{CustomProcedure, JsonValue, RpcError};
 
 const ERROR_CODE_INTERNAL: i32 = 500;
 const UNKNOWN_GEO: &str = "UNKNOWN";
@@ -38,7 +38,7 @@ pub struct ProcedureErrorData {
 }
 
 impl CustomProcedure for LeaderRoutingProcedure {
-    type Params = ();
+    type Params = JsonValue;
     type SuccessData = LeaderRoutingOutput;
     type ErrorData = ProcedureErrorData;
 
