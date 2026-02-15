@@ -2,7 +2,7 @@ use log::info;
 use serde::Serialize;
 use std::net::{IpAddr, SocketAddr};
 use zela_std::rpc_client::{RpcClient, response::RpcContactInfo};
-use zela_std::{CustomProcedure, JsonValue, RpcError};
+use zela_std::{CustomProcedure, RpcError};
 
 const ERROR_CODE_INTERNAL: i32 = 500;
 const UNKNOWN_GEO: &str = "UNKNOWN";
@@ -38,11 +38,12 @@ pub struct ProcedureErrorData {
 }
 
 impl CustomProcedure for LeaderRoutingProcedure {
-    type Params = JsonValue;
+    type Params = String;
     type SuccessData = LeaderRoutingOutput;
     type ErrorData = ProcedureErrorData;
 
-    async fn run(_params: Self::Params) -> Result<Self::SuccessData, RpcError<Self::ErrorData>> {
+    async fn run(params: Self::Params) -> Result<Self::SuccessData, RpcError<Self::ErrorData>> {
+        log::info!("{}", params);
         let rpc = RpcClient::new();
 
         let slot = rpc.get_slot().await.map_err(|err| {
