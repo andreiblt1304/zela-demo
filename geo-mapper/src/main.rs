@@ -2,18 +2,21 @@ use std::{
     collections::BTreeMap,
     error::Error,
     fs,
-    net::IpAddr,
+    io::{self, ErrorKind},
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
 };
 
 use maxminddb::{MaxMindDbError, Reader, geoip2};
+use serde_json::{Value, json};
 
 const DEFAULT_DB_PATH: &str = "../GeoLite2-City_20260210/GeoLite2-City.mmdb";
 const RECORD_SIZE: usize = 33;
 
 #[derive(Debug, Clone)]
 struct Cli {
-    input: PathBuf,
+    input: Option<PathBuf>,
+    rpc_url: Option<String>,
     output: PathBuf,
     db_path: PathBuf,
 }
@@ -67,9 +70,24 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let cli = parse_cli()?;
-    let input = fs::read_to_string(&cli.input)?;
 
-    let rows = parse_rows(&input)?;
+    let rows = if let Some(input_path) = &cli.input {
+        let input = fs::read_to_string(input_path)?;
+        parse_rows(&input)?
+    } else {
+        let rpc_url = cli
+            .rpc_url
+            .as_deref()
+            .expect("parse_cli validates rpc_url is set");
+        let rows = fetch_rows_from_rpc(rpc_url)?;
+        println!("fetched {} rows from {}", rows.len(), rpc_url);
+        rows
+    };
+
+    if rows.is_empty() {
+        println!("warning: no rows found; output map will be empty");
+    }
+
     let requires_db = rows
         .iter()
         .any(|row| matches!(row.geo_source, GeoSource::Ip(_)));
@@ -118,6 +136,7 @@ fn parse_cli() -> Result<Cli, Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
 
     let mut input: Option<PathBuf> = None;
+    let mut rpc_url: Option<String> = None;
     let mut output: Option<PathBuf> = None;
     let mut db_path = PathBuf::from(DEFAULT_DB_PATH);
 
@@ -125,19 +144,39 @@ fn parse_cli() -> Result<Cli, Box<dyn Error>> {
         match arg.as_str() {
             "--input" => {
                 let Some(value) = args.next() else {
-                    return Err("missing value for --input".into());
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "missing value for --input",
+                    )
+                    .into());
                 };
                 input = Some(PathBuf::from(value));
             }
+            "--rpc-url" => {
+                let Some(value) = args.next() else {
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "missing value for --rpc-url",
+                    )
+                    .into());
+                };
+                rpc_url = Some(value);
+            }
             "--output" => {
                 let Some(value) = args.next() else {
-                    return Err("missing value for --output".into());
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "missing value for --output",
+                    )
+                    .into());
                 };
                 output = Some(PathBuf::from(value));
             }
             "--db" => {
                 let Some(value) = args.next() else {
-                    return Err("missing value for --db".into());
+                    return Err(
+                        io::Error::new(ErrorKind::InvalidInput, "missing value for --db").into(),
+                    );
                 };
                 db_path = PathBuf::from(value);
             }
@@ -146,20 +185,30 @@ fn parse_cli() -> Result<Cli, Box<dyn Error>> {
                 std::process::exit(0);
             }
             _ => {
-                return Err(format!("unknown argument: {arg}").into());
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("unknown argument: {arg}"),
+                )
+                .into());
             }
         }
     }
 
-    let Some(input) = input else {
-        return Err("--input is required".into());
-    };
     let Some(output) = output else {
-        return Err("--output is required".into());
+        return Err(io::Error::new(ErrorKind::InvalidInput, "--output is required").into());
     };
+
+    if input.is_some() == rpc_url.is_some() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "exactly one of --input or --rpc-url is required",
+        )
+        .into());
+    }
 
     Ok(Cli {
         input,
+        rpc_url,
         output,
         db_path,
     })
@@ -167,10 +216,102 @@ fn parse_cli() -> Result<Cli, Box<dyn Error>> {
 
 fn print_usage() {
     println!(
-        "Usage: geo-mapper --input <leaders.csv> --output <leader_geo_map.bin> [--db <GeoLite2-City.mmdb>]"
+        "Usage:\n  geo-mapper --input <leaders.csv> --output <leader_geo_map.bin> [--db <GeoLite2-City.mmdb>]\n  geo-mapper --rpc-url <solana_rpc_url> --output <leader_geo_map.bin> [--db <GeoLite2-City.mmdb>]"
     );
-    println!("Input format per line: <leader_pubkey>,<ip_or_bucket>");
+    println!("CSV format: <leader_pubkey>,<ip_or_bucket>");
     println!("Examples of second column: 95.217.151.43 | EU | @NA | APAC");
+}
+
+fn fetch_rows_from_rpc(rpc_url: &str) -> Result<Vec<InputRow>, Box<dyn Error>> {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getClusterNodes",
+        "params": [],
+    })
+    .to_string();
+
+    let response = ureq::post(rpc_url)
+        .set("Content-Type", "application/json")
+        .send_string(&request)?;
+    let body = response.into_string()?;
+
+    parse_cluster_nodes_response(&body)
+}
+
+fn parse_cluster_nodes_response(body: &str) -> Result<Vec<InputRow>, Box<dyn Error>> {
+    let payload: Value = serde_json::from_str(body)?;
+
+    if let Some(err) = payload.get("error") {
+        return Err(io::Error::other(format!("RPC getClusterNodes error: {err}")).into());
+    }
+
+    let result = payload
+        .get("result")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                "RPC getClusterNodes response missing result array",
+            )
+        })?;
+
+    let mut rows = Vec::new();
+
+    for node in result {
+        let Some(pubkey) = node.get("pubkey").and_then(Value::as_str) else {
+            continue;
+        };
+
+        let Ok(pubkey) = decode_pubkey(pubkey) else {
+            continue;
+        };
+
+        let Some(ip) = preferred_ip_from_node(node) else {
+            continue;
+        };
+
+        rows.push(InputRow {
+            pubkey,
+            geo_source: GeoSource::Ip(ip),
+        });
+    }
+
+    Ok(rows)
+}
+
+fn preferred_ip_from_node(node: &Value) -> Option<IpAddr> {
+    for key in ["tpu_quic", "tpu", "gossip", "rpc"] {
+        if let Some(socket) = node.get(key).and_then(Value::as_str)
+            && let Some(ip) = extract_ip_from_socket(socket)
+        {
+            return Some(ip);
+        }
+    }
+
+    None
+}
+
+fn extract_ip_from_socket(socket: &str) -> Option<IpAddr> {
+    if let Ok(addr) = socket.parse::<SocketAddr>() {
+        return Some(addr.ip());
+    }
+
+    if let Ok(ip) = socket.parse::<IpAddr>() {
+        return Some(ip);
+    }
+
+    if socket.starts_with('[')
+        && let Some(end) = socket.find(']')
+    {
+        return socket[1..end].parse::<IpAddr>().ok();
+    }
+
+    if let Some((host, _port)) = socket.rsplit_once(':') {
+        return host.parse::<IpAddr>().ok();
+    }
+
+    None
 }
 
 fn parse_rows(input: &str) -> Result<Vec<InputRow>, Box<dyn Error>> {
@@ -313,5 +454,59 @@ mod tests {
             GeoSource::Bucket(GeoBucket::Eu)
         ));
         assert!(matches!(rows[1].geo_source, GeoSource::Ip(_)));
+    }
+
+    #[test]
+    fn extract_ip_from_socket_supports_ipv4_and_ipv6() {
+        assert_eq!(
+            extract_ip_from_socket("95.217.151.43:8001"),
+            Some("95.217.151.43".parse().unwrap())
+        );
+        assert_eq!(
+            extract_ip_from_socket("[2001:db8::1]:8001"),
+            Some("2001:db8::1".parse().unwrap())
+        );
+        assert_eq!(extract_ip_from_socket("not-an-ip"), None);
+    }
+
+    #[test]
+    fn parse_cluster_nodes_response_prefers_transport_order() {
+        let body = r#"{
+            "jsonrpc":"2.0",
+            "id":1,
+            "result":[
+                {
+                    "pubkey":"7XSXtg2CWwjWCa7j4kXfYLMi8xawJbq6XW6xMa6Y5P9Q",
+                    "tpu_quic":"1.2.3.4:8001",
+                    "tpu":"5.6.7.8:8001",
+                    "gossip":"9.9.9.9:8001",
+                    "rpc":"10.0.0.1:8899"
+                },
+                {
+                    "pubkey":"2jXy799ynN5A6xM4mT2QPY2ATqNnSboP8Gr3HdWu3UwR",
+                    "tpu_quic":null,
+                    "tpu":"[2001:db8::1]:8001",
+                    "gossip":null,
+                    "rpc":null
+                },
+                {
+                    "pubkey":"invalid",
+                    "tpu_quic":"2.2.2.2:8001"
+                }
+            ]
+        }"#;
+
+        let rows = parse_cluster_nodes_response(body).unwrap();
+        assert_eq!(rows.len(), 2);
+
+        match rows[0].geo_source {
+            GeoSource::Ip(ip) => assert_eq!(ip, "1.2.3.4".parse::<IpAddr>().unwrap()),
+            GeoSource::Bucket(_) => panic!("expected ip row"),
+        }
+
+        match rows[1].geo_source {
+            GeoSource::Ip(ip) => assert_eq!(ip, "2001:db8::1".parse::<IpAddr>().unwrap()),
+            GeoSource::Bucket(_) => panic!("expected ip row"),
+        }
     }
 }
