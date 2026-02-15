@@ -38,7 +38,7 @@ pub struct ProcedureErrorData {
 }
 
 impl CustomProcedure for LeaderRoutingProcedure {
-    type Params = String;
+    type Params = i32;
     type SuccessData = LeaderRoutingOutput;
     type ErrorData = ProcedureErrorData;
 
