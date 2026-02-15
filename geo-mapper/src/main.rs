@@ -1,49 +1,22 @@
+mod cli;
+mod db;
+
 use std::{
     collections::BTreeMap,
     error::Error,
-    fs,
     io::{self, ErrorKind},
     net::{IpAddr, SocketAddr},
-    path::{Path, PathBuf},
 };
 
-use maxminddb::{MaxMindDbError, Reader, geoip2};
+use crate::cli::Cli;
+use crate::db::{GeoBucket, RECORD_SIZE, compute_geolocation, get_db_reader, write_binary_map};
 use serde_json::{Value, json};
-
-const DEFAULT_DB_PATH: &str = "../GeoLite2-City_20260210/GeoLite2-City.mmdb";
-const DEFAULT_RPC_URL: &str = "https://api.mainnet-beta.solana.com";
-const RECORD_SIZE: usize = 33;
-
-#[derive(Debug, Clone)]
-struct Cli {
-    rpc_url: String,
-    output: PathBuf,
-    db_path: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum GeoBucket {
-    Unknown = 0,
-    Eu = 1,
-    Na = 2,
-    Apac = 3,
-    Me = 4,
-}
-
-impl GeoBucket {
-    fn as_u8(self) -> u8 {
-        self as u8
-    }
-}
 
 #[derive(Debug)]
 struct InputRow {
     pubkey: [u8; 32],
     ip: IpAddr,
 }
-
-type DbReader = Reader<Vec<u8>>;
 
 fn main() {
     if let Err(err) = run() {
@@ -53,7 +26,7 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let cli = parse_cli()?;
+    let cli = Cli::parse()?;
 
     let rows = fetch_rows_from_rpc(&cli.rpc_url)?;
     println!("fetched {} rows from {}", rows.len(), cli.rpc_url);
@@ -88,74 +61,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
 
     Ok(())
-}
-
-fn parse_cli() -> Result<Cli, Box<dyn Error>> {
-    let mut args = std::env::args().skip(1);
-
-    let mut rpc_url: Option<String> = None;
-    let mut output: Option<PathBuf> = None;
-    let mut db_path = PathBuf::from(DEFAULT_DB_PATH);
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--rpc-url" => {
-                let Some(value) = args.next() else {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidInput,
-                        "missing value for --rpc-url",
-                    )
-                    .into());
-                };
-                rpc_url = Some(value);
-            }
-            "--output" => {
-                let Some(value) = args.next() else {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidInput,
-                        "missing value for --output",
-                    )
-                    .into());
-                };
-                output = Some(PathBuf::from(value));
-            }
-            "--db" => {
-                let Some(value) = args.next() else {
-                    return Err(
-                        io::Error::new(ErrorKind::InvalidInput, "missing value for --db").into(),
-                    );
-                };
-                db_path = PathBuf::from(value);
-            }
-            "-h" | "--help" => {
-                print_usage();
-                std::process::exit(0);
-            }
-            _ => {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("unknown argument: {arg}"),
-                )
-                .into());
-            }
-        }
-    }
-
-    let Some(output) = output else {
-        return Err(io::Error::new(ErrorKind::InvalidInput, "--output is required").into());
-    };
-
-    Ok(Cli {
-        rpc_url: rpc_url.unwrap_or_else(|| DEFAULT_RPC_URL.to_string()),
-        output,
-        db_path,
-    })
-}
-
-fn print_usage() {
-    println!(
-        "Usage: geo-mapper --output <leader_geo_map.bin> [--rpc-url <solana_rpc_url>] [--db <GeoLite2-City.mmdb>]"
-    );
 }
 
 fn fetch_rows_from_rpc(rpc_url: &str) -> Result<Vec<InputRow>, Box<dyn Error>> {
@@ -261,62 +166,9 @@ fn decode_pubkey(pubkey: &str) -> Result<[u8; 32], Box<dyn Error>> {
     Ok(pubkey_bytes)
 }
 
-fn compute_geolocation(reader: &DbReader, ip: IpAddr) -> Result<GeoBucket, Box<dyn Error>> {
-    let result = reader.lookup(ip)?;
-
-    if let Some(city) = result.decode::<geoip2::City>()?
-        && let Some(iso_code) = city.country.iso_code
-    {
-        return Ok(country_to_bucket(iso_code));
-    }
-
-    Ok(GeoBucket::Unknown)
-}
-
-fn get_db_reader(path: &Path) -> Result<DbReader, MaxMindDbError> {
-    Reader::open_readfile(path)
-}
-
-fn country_to_bucket(iso_code: &str) -> GeoBucket {
-    match iso_code.to_ascii_uppercase().as_str() {
-        "DE" | "FR" | "NL" | "GB" | "CH" | "SE" | "NO" | "PL" | "ES" | "IT" => GeoBucket::Eu,
-        "AE" | "SA" | "IL" | "TR" | "QA" | "BH" | "OM" | "KW" => GeoBucket::Me,
-        "US" | "CA" | "MX" => GeoBucket::Na,
-        "JP" | "KR" | "SG" | "HK" | "TW" | "IN" | "AU" | "NZ" => GeoBucket::Apac,
-        _ => GeoBucket::Unknown,
-    }
-}
-
-fn write_binary_map(
-    path: &Path,
-    map: &BTreeMap<[u8; 32], GeoBucket>,
-) -> Result<(), Box<dyn Error>> {
-    let mut output = Vec::with_capacity(map.len() * RECORD_SIZE);
-    for (pubkey, bucket) in map {
-        output.extend_from_slice(pubkey);
-        output.push(bucket.as_u8());
-    }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::write(path, output)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn country_to_bucket_maps_known_codes() {
-        assert_eq!(country_to_bucket("DE"), GeoBucket::Eu);
-        assert_eq!(country_to_bucket("US"), GeoBucket::Na);
-        assert_eq!(country_to_bucket("JP"), GeoBucket::Apac);
-        assert_eq!(country_to_bucket("AE"), GeoBucket::Me);
-        assert_eq!(country_to_bucket("BR"), GeoBucket::Unknown);
-    }
 
     #[test]
     fn extract_ip_from_socket_supports_ipv4_and_ipv6() {
