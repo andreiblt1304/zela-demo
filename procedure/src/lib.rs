@@ -38,7 +38,7 @@ pub struct ProcedureErrorData {
 }
 
 impl CustomProcedure for LeaderRoutingProcedure {
-    type Params = JsonValue;
+    type Params = Option<JsonValue>;
     type SuccessData = LeaderRoutingOutput;
     type ErrorData = ProcedureErrorData;
 
