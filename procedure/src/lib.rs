@@ -179,18 +179,12 @@ fn find_leader_for_slot_index(
     leader_schedule: &RpcLeaderSchedule,
     slot_index: usize,
 ) -> Option<String> {
-    let mut matching_leaders: Vec<&str> = leader_schedule
+    // HashMap iteration order is non-deterministic; pick a stable lexicographic winner.
+    leader_schedule
         .iter()
         .filter_map(|(leader, slots)| slots.contains(&slot_index).then_some(leader.as_str()))
-        .collect();
-
-    if matching_leaders.is_empty() {
-        return None;
-    }
-
-    // HashMap iteration order is non-deterministic, so pick a stable winner.
-    matching_leaders.sort_unstable();
-    matching_leaders.first().map(|leader| (*leader).to_string())
+        .min()
+        .map(ToString::to_string)
 }
 
 fn lookup_leader_geo(leader_pubkey: &str) -> Option<&'static str> {
