@@ -29,7 +29,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse()?;
 
     let rows = fetch_rows_from_rpc(&cli.rpc_url)?;
-    println!("fetched {} rows from {}", rows.len(), cli.rpc_url);
+    println!(
+        "fetched {} candidate leader rows from {}",
+        rows.len(),
+        cli.rpc_url
+    );
 
     if rows.is_empty() {
         println!("warning: no rows found; output map will be empty");
@@ -53,11 +57,28 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     write_binary_map(&cli.output, &map)?;
 
+    let total_leaders = map.len();
+    let unknown_leaders = map
+        .values()
+        .filter(|bucket| **bucket == GeoBucket::Unknown)
+        .count();
+    let mapped_leaders = total_leaders.saturating_sub(unknown_leaders);
+    let unknown_rate = if total_leaders == 0 {
+        0.0
+    } else {
+        (unknown_leaders as f64 / total_leaders as f64) * 100.0
+    };
+    let output_bytes = total_leaders * RECORD_SIZE;
+
     println!(
         "wrote {} records ({} bytes) to {}",
-        map.len(),
-        map.len() * RECORD_SIZE,
+        total_leaders,
+        output_bytes,
         cli.output.display()
+    );
+    println!(
+        "stats: total_leaders={} mapped_leaders={} unknown_leaders={} unknown_rate={:.2}% output_bytes={}",
+        total_leaders, mapped_leaders, unknown_leaders, unknown_rate, output_bytes
     );
 
     Ok(())
