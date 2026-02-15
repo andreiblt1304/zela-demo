@@ -834,6 +834,7 @@ dependencies = [
  "bs58",
  "maxminddb",
  "serde_json",
+ "sha2 0.10.9",
  "ureq",
 ]
 
