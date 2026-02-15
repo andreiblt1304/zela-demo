@@ -2,3 +2,4 @@
 *.csv
 GeoLite2-City_*/
 .env
+DS_STORE
