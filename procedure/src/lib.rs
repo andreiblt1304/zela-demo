@@ -38,12 +38,11 @@ pub struct ProcedureErrorData {
 }
 
 impl CustomProcedure for LeaderRoutingProcedure {
-    type Params = i32;
+    type Params = ();
     type SuccessData = LeaderRoutingOutput;
     type ErrorData = ProcedureErrorData;
 
-    async fn run(params: Self::Params) -> Result<Self::SuccessData, RpcError<Self::ErrorData>> {
-        log::info!("{}", params);
+    async fn run(_params: Self::Params) -> Result<Self::SuccessData, RpcError<Self::ErrorData>> {
         let rpc = RpcClient::new();
 
         let slot = rpc.get_slot().await.map_err(|err| {
