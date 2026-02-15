@@ -1,10 +1,10 @@
 use std::{
     error::Error,
     io::{self, ErrorKind},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
-const DEFAULT_DB_PATH: &str = "../GeoLite2-City_20260210/GeoLite2-City.mmdb";
+const DEFAULT_DB_REL_PATH: &str = "GeoLite2-City_20260210/GeoLite2-City.mmdb";
 const DEFAULT_RPC_URL: &str = "https://api.mainnet-beta.solana.com";
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ impl Cli {
 
         let mut rpc_url: Option<String> = None;
         let mut output: Option<PathBuf> = None;
-        let mut db_path = PathBuf::from(DEFAULT_DB_PATH);
+        let mut db_path = detect_default_db_path();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -84,4 +84,20 @@ fn print_usage() {
     println!(
         "Usage: geo-mapper --output <leader_geo_map.bin> [--rpc-url <solana_rpc_url>] [--db <GeoLite2-City.mmdb>]"
     );
+}
+
+fn detect_default_db_path() -> PathBuf {
+    let candidates = [
+        PathBuf::from(DEFAULT_DB_REL_PATH),
+        PathBuf::from("..").join(DEFAULT_DB_REL_PATH),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(DEFAULT_DB_REL_PATH),
+    ];
+
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
 }
