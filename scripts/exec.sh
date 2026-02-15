@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source ../.env
+source .env
 
 : "${JWT:?JWT is required}"
 : "${PROC:?PROC is required}"
