@@ -6,3 +6,5 @@ export JWT="$(
       'https://auth.zela.io/realms/zela/protocol/openid-connect/token' \
     | jq -r '.access_token'
   )"
+
+echo $JWT

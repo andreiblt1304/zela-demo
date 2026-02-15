@@ -1,3 +1,4 @@
 /target
 *.csv
 GeoLite2-City_*/
+.env

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# set -euo pipefail
+set -euo pipefail
 
-# : "${JWT:?JWT is required}"
-# : "${PROC:?PROC is required}"
-# : "${HASH:?HASH is required}"
+source ../.env
 
-curl -i -sS \
+: "${JWT:?JWT is required}"
+: "${PROC:?PROC is required}"
+: "${HASH:?HASH is required}"
+
+curl -sS \
   -H "Authorization: Bearer ${JWT}" \
   -H "Content-Type: application/json" \
   --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"zela.${PROC}#${HASH}\",\"params\":{}}" \
