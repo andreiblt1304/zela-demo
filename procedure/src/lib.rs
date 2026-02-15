@@ -42,7 +42,7 @@ impl CustomProcedure for LeaderRoutingProcedure {
     type SuccessData = LeaderRoutingOutput;
     type ErrorData = ProcedureErrorData;
 
-    async fn run() -> Result<Self::SuccessData, RpcError<Self::ErrorData>> {
+    async fn run(_params: Self::Params) -> Result<Self::SuccessData, RpcError<Self::ErrorData>> {
         let rpc = RpcClient::new();
 
         let slot = rpc.get_slot().await.map_err(|err| {
