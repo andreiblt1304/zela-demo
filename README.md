@@ -34,31 +34,22 @@ This fallback avoids random behavior and prevents flapping for the same leader.
 | `APAC` (or APAC country code) | `Tokyo` |
 | `UNKNOWN` / unmapped | deterministic hash fallback (`fnv1a64 % 4`) by leader pubkey |
 
- `fnv1a64 % 4` is a small deterministic hash function over bytes.
-  - It starts from a fixed 64-bit offset basis (0xcbf29ce484222325)
-  - For each byte XOR current hash with the byte
->  fnv = Fowler-Noll-Vo hash family; 
->  1a = FNV-1a variant (XOR first, then multiply); 
->  64 = 64-bit output size (u64); 
+`fnv1a64 % 4` is a small deterministic fallback hash over leader pubkey bytes.
+- Starts from fixed 64-bit offset basis: `0xcbf29ce484222325`
+- For each byte: XOR first, then multiply by fixed prime
+- `fnv` = Fowler-Noll-Vo
+- `1a` = FNV-1a variant
+- `64` = 64-bit output (`u64`)
 
-## Build locally
-
-```bash
-cargo check
-cargo test
-```
-
-## Deploy on Zela
-
-### Geo data notes
+## Geo data notes
 
 - The bundled map is now a compact binary file at `procedure/data/leader_geo_map.bin`.
 - A sidecar freshness/traceability file is generated next to it: `procedure/data/leader_geo_map.meta.json`.
 - Record layout is fixed-size: `[leader_pubkey_32_bytes][geo_bucket_1_byte]` (33 bytes per leader).
 - The `geo-mapper` crate regenerates this file by fetching `getClusterNodes` from Solana RPC,
   deriving `validator_pubkey -> preferred_ip`, and mapping IPs to coarse geo buckets via GeoLite2 City.
-- Reproducible pipeline command:
 
+Reproducible pipeline command:
 ```bash
 ./scripts/rebuild-leader-geo-map.sh
 ```
@@ -82,14 +73,14 @@ cargo test
 
 Runtime only calls Solana RPC methods (`getSlot`, `getEpochSchedule`, `getLeaderSchedule`) and does not call any external geo HTTP APIs. Geo resolution is done from a bundled compact binary map (`33` bytes per leader record), generated offline by `geo-mapper` from GeoLite2. This keeps the procedure artifact small (order of magnitude around the assignment target), while still providing deterministic region routing and a stable fallback for unmapped leaders.
 
-### Script-based quickstart (from repo root)
+## Script-based quickstart (from repo root)
 
 ```bash
 ./scripts/auth.sh
 ./scripts/exec.sh
 ```
 
-`scripts/exec.sh` currently expects to run from repo root (`source .env`). You can use the `.example.env` file to see what env vars are used.
+> `scripts/exec.sh` currently expects to run from repo root (`source .env`). You can use the `.example.env` file to see what env vars are used.
 
 ## Real sample response from executor
 
@@ -100,7 +91,7 @@ Runtime only calls Solana RPC methods (`getSlot`, `getEpochSchedule`, `getLeader
   "result":{
     "closest_region":"Frankfurt",
     "leader":"JupmVLmA8RoyTUbTMMuTtoPWHEiNQobxgTeGTrPNkzT",
-    "leader_geo":"UNKNOWN",
+    "leader_geo":"EU",
     "slot":400403429
   }
 }
@@ -124,3 +115,5 @@ If required Solana data cannot be fetched, the procedure returns a structured er
   }
 }
 ```
+
+Feedback can be found in the designated [file](FEEDBACK.md).
