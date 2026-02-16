@@ -13,11 +13,7 @@
 2. Fetch epoch schedule (`getEpochSchedule`) and compute `slot_index` within epoch.
 3. Fetch leader schedule for the slot (`getLeaderSchedule`) and resolve the leader whose index list contains `slot_index`.
 4. Look up leader pubkey in a bundled static map (`leader_pubkey -> leader_geo`).
-5. Map `leader_geo` to a Zela region with deterministic rules:
-   - `EU` (+ common EU country codes) -> `Frankfurt`
-   - `ME` (+ common Middle East country codes) -> `Dubai`
-   - `NA` (+ `US`, `CA`, `MX`) -> `NewYork`
-   - `APAC` (+ common APAC country codes) -> `Tokyo`
+5. Map `leader_geo` to a Zela region with deterministic rules
 6. If leader geo is unknown:
    - return `leader_geo = "UNKNOWN"`
    - choose `closest_region` using a deterministic hash fallback on leader pubkey
