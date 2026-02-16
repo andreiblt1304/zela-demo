@@ -1,15 +1,15 @@
 {
   "db_path": "/Users/p0nd/code/zela-assignment/GeoLite2-City_20260210/GeoLite2-City.mmdb",
-  "generated_at_unix_secs": 1771176736,
-  "map_sha256": "baa5fc5beede66b1a11412b9a46d1835215372d40e81758e282a96c4131e1f55",
-  "map_size_bytes": 170775,
-  "mapped_leaders": 4921,
+  "generated_at_unix_secs": 1771225917,
+  "map_sha256": "2dbd96a64953555d06da666d72217b866487a6ea88485888365922e0e58227e0",
+  "map_size_bytes": 169554,
+  "mapped_leaders": 4886,
   "mmdb_sha256": "167bdf1871fc6f4e74ea6b84be50d78e034aaeea2b59e31711baae19d6681fa4",
   "record_size_bytes": 33,
-  "rpc_slot": 400473968,
+  "rpc_slot": 400599771,
   "rpc_url": "https://api.mainnet-beta.solana.com",
   "schema_version": 1,
-  "total_leaders": 5175,
-  "unknown_leaders": 254,
-  "unknown_rate_pct": 4.908212560386473
+  "total_leaders": 5138,
+  "unknown_leaders": 252,
+  "unknown_rate_pct": 4.904632152588556
 }
