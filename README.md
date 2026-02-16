@@ -1,13 +1,7 @@
 # Zela Interview Assignment: Leader Routing
 
-## What this procedure does
 
-This procedure answers:
-
-> If called right now, which server region should handle the request to be closest (coarsely) to the current Solana leader?
-
-It returns:
-
+## Return value
 - `slot`: current Solana slot
 - `leader`: validator identity pubkey that is leader for that slot
 - `leader_geo`: coarse geo label for the leader (`EU`, `NA`, `APAC`, `ME`, or `UNKNOWN`)
@@ -38,7 +32,14 @@ This fallback avoids random behavior and prevents flapping for the same leader.
 | `ME` (or ME country code) | `Dubai` |
 | `NA` (or `US`/`CA`/`MX`) | `NewYork` |
 | `APAC` (or APAC country code) | `Tokyo` |
-| `UNKNOWN` / unmapped | deterministic hash fallback by leader pubkey |
+| `UNKNOWN` / unmapped | deterministic hash fallback (`fnv1a64 % 4`) by leader pubkey |
+
+ `fnv1a64 % 4` is a small deterministic hash function over bytes.
+  - It starts from a fixed 64-bit offset basis (0xcbf29ce484222325)
+  - For each byte XOR current hash with the byte
+>  fnv = Fowler-Noll-Vo hash family; 
+>  1a = FNV-1a variant (XOR first, then multiply); 
+>  64 = 64-bit output size (u64); 
 
 ## Build locally
 
@@ -49,36 +50,46 @@ cargo test
 
 ## Deploy on Zela
 
-1. Push this repository to GitHub.
-2. In Zela Dashboard, create a source:
-   - repository
-   - branch
-   - Cargo package: `procedure`
-3. Wait for Builder status `Success`.
-4. Use OAuth2 `client_credentials` flow to obtain a JWT:
+### Geo data notes
+
+- The bundled map is now a compact binary file at `procedure/data/leader_geo_map.bin`.
+- A sidecar freshness/traceability file is generated next to it: `procedure/data/leader_geo_map.meta.json`.
+- Record layout is fixed-size: `[leader_pubkey_32_bytes][geo_bucket_1_byte]` (33 bytes per leader).
+- The `geo-mapper` crate regenerates this file by fetching `getClusterNodes` from Solana RPC,
+  deriving `validator_pubkey -> preferred_ip`, and mapping IPs to coarse geo buckets via GeoLite2 City.
+- Reproducible pipeline command:
 
 ```bash
-curl \
-  --header 'Authorization: Basic base64($key_client_id:$key_secret)' \
-  --data 'grant_type=client%5Fcredentials' \
-  --data 'scope=zela%2Dexecutor%3Acall' \
-  'https://auth.zela.io/realms/zela/protocol/openid-connect/token'
+./scripts/rebuild-leader-geo-map.sh
 ```
 
-5. Call executor:
+- The pipeline prints deterministic generation stats:
+  - `total_leaders`
+  - `mapped_leaders`
+  - `unknown_leaders`
+  - `unknown_rate`
+  - `output_bytes`
+- Metadata file fields include:
+  - `generated_at_unix_secs`
+  - `rpc_url`, `rpc_slot`
+  - `db_path`, `mmdb_sha256`
+  - `record_size_bytes`, `map_size_bytes`, `map_sha256`
+  - mapping totals and unknown rate
+
+- No runtime external geo API calls are needed.
+
+### Why this meets geo constraints
+
+Runtime only calls Solana RPC methods (`getSlot`, `getEpochSchedule`, `getLeaderSchedule`) and does not call any external geo HTTP APIs. Geo resolution is done from a bundled compact binary map (`33` bytes per leader record), generated offline by `geo-mapper` from GeoLite2. This keeps the procedure artifact small (order of magnitude around the assignment target), while still providing deterministic region routing and a stable fallback for unmapped leaders.
+
+### Script-based quickstart (from repo root)
 
 ```bash
-curl \
-  --header "authorization: Bearer $jwt" \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "jsonrpc":"2.0",
-    "id":1,
-    "method":"zela.<PROCEDURE_NAME>#COMMIT_HASH",
-    "params": {}
-  }' \
-  'https://executor.zela.io'
+./scripts/auth.sh
+./scripts/exec.sh
 ```
+
+`scripts/exec.sh` currently expects to run from repo root (`source .env`). You can use the `.example.env` file to see what env vars are used.
 
 ## Real sample response from executor
 
@@ -113,43 +124,3 @@ If required Solana data cannot be fetched, the procedure returns a structured er
   }
 }
 ```
-
-## Geo data notes
-
-- The bundled map is now a compact binary file at `procedure/data/leader_geo_map.bin`.
-- A sidecar freshness/traceability file is generated next to it: `procedure/data/leader_geo_map.meta.json`.
-- Record layout is fixed-size: `[leader_pubkey_32_bytes][geo_bucket_1_byte]` (33 bytes per leader).
-- The `geo-mapper` crate regenerates this file by fetching `getClusterNodes` from Solana RPC,
-  deriving `leader_pubkey -> preferred_ip`, and mapping IPs to coarse geo buckets via GeoLite2 City.
-- Reproducible pipeline command:
-
-```bash
-./scripts/rebuild-leader-geo-map.sh
-```
-
-- The pipeline prints deterministic generation stats:
-  - `total_leaders`
-  - `mapped_leaders`
-  - `unknown_leaders`
-  - `unknown_rate`
-  - `output_bytes`
-- Metadata file fields include:
-  - `generated_at_unix_secs`
-  - `rpc_url`, `rpc_slot`
-  - `db_path`, `mmdb_sha256`
-  - `record_size_bytes`, `map_size_bytes`, `map_sha256`
-  - mapping totals and unknown rate
-- Example:
-
-```bash
-cargo run -p geo-mapper -- \
-  --rpc-url https://api.mainnet-beta.solana.com \
-  --db GeoLite2-City_20260210/GeoLite2-City.mmdb \
-  --output procedure/data/leader_geo_map.bin
-```
-
-- No runtime external geo API calls are needed.
-
-### Why this meets geo constraints
-
-Runtime only calls Solana RPC methods (`getSlot`, `getEpochSchedule`, `getLeaderSchedule`) and does not call any external geo HTTP APIs. Geo resolution is done from a bundled compact binary map (`33` bytes per leader record), generated offline by `geo-mapper` from GeoLite2. This keeps the procedure artifact small (order of magnitude around the assignment target), while still providing deterministic region routing and a stable fallback for unmapped leaders.
