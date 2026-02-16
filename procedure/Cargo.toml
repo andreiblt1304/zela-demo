@@ -13,3 +13,4 @@ serde_json = "1"
 log = "0.4"
 thiserror = "2"
 bs58 = "0.5"
+geo-rules = { path = "../geo-rules" }

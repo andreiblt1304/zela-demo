@@ -1,3 +1,4 @@
+use geo_rules::{GeoBucket, Region, region_from_geo_input};
 use log::info;
 use serde::Serialize;
 use zela_std::rpc_client::{RpcClient, response::RpcLeaderSchedule};
@@ -28,6 +29,17 @@ pub enum ServerRegion {
     NewYork,
     #[serde(rename = "Tokyo")]
     Tokyo,
+}
+
+impl From<Region> for ServerRegion {
+    fn from(value: Region) -> Self {
+        match value {
+            Region::Dubai => Self::Dubai,
+            Region::Frankfurt => Self::Frankfurt,
+            Region::NewYork => Self::NewYork,
+            Region::Tokyo => Self::Tokyo,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,7 +131,6 @@ fn find_leader_for_slot_index(
     leader_schedule: &RpcLeaderSchedule,
     slot_index: usize,
 ) -> Option<String> {
-    // HashMap iteration order is non-deterministic; pick a stable lexicographic winner.
     leader_schedule
         .iter()
         .filter_map(|(leader, slots)| slots.contains(&slot_index).then_some(leader.as_str()))
@@ -175,13 +186,8 @@ fn lookup_geo_bucket(geo_map: &[u8], leader_pubkey: &[u8; 32]) -> Option<u8> {
 }
 
 fn geo_bucket_to_label(bucket: u8) -> Option<&'static str> {
-    match bucket {
-        1 => Some("EU"),
-        2 => Some("NA"),
-        3 => Some("APAC"),
-        4 => Some("ME"),
-        _ => None,
-    }
+    let bucket = GeoBucket::from_u8(bucket)?;
+    (bucket != GeoBucket::Unknown).then_some(bucket.label())
 }
 
 fn choose_region(leader_geo: &str, leader_pubkey: &str) -> ServerRegion {
@@ -189,15 +195,7 @@ fn choose_region(leader_geo: &str, leader_pubkey: &str) -> ServerRegion {
 }
 
 fn region_from_geo(leader_geo: &str) -> Option<ServerRegion> {
-    match leader_geo.trim().to_ascii_uppercase().as_str() {
-        "EU" | "DE" | "FR" | "NL" | "GB" | "CH" | "SE" | "NO" | "PL" | "ES" | "IT" => {
-            Some(ServerRegion::Frankfurt)
-        }
-        "ME" | "AE" | "SA" | "IL" | "TR" | "QA" | "BH" | "OM" | "KW" => Some(ServerRegion::Dubai),
-        "NA" | "US" | "CA" | "MX" => Some(ServerRegion::NewYork),
-        "APAC" | "JP" | "KR" | "SG" | "HK" | "TW" | "IN" | "AU" | "NZ" => Some(ServerRegion::Tokyo),
-        _ => None,
-    }
+    region_from_geo_input(leader_geo).map(Into::into)
 }
 
 fn fallback_region(leader_pubkey: &str) -> ServerRegion {

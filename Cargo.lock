@@ -832,11 +832,16 @@ name = "geo-mapper"
 version = "0.1.0"
 dependencies = [
  "bs58",
+ "geo-rules",
  "maxminddb",
  "serde_json",
  "sha2 0.10.9",
  "ureq",
 ]
+
+[[package]]
+name = "geo-rules"
+version = "0.1.0"
 
 [[package]]
 name = "getrandom"
@@ -1494,6 +1499,7 @@ name = "procedure"
 version = "0.1.0"
 dependencies = [
  "bs58",
+ "geo-rules",
  "log",
  "serde",
  "serde_json",
